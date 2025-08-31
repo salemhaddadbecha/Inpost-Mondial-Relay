@@ -53,22 +53,22 @@ def test_daily_counts(sample_data):
 
 
 def test_weekly_counts(sample_data):
-    df, _ = sample_data
+    df, apm_df = sample_data
     stored = df.filter(col("event_type") == "ParcelStoredForDeliveryByCourier")
-    weekly = compute_weekly_counts(stored).collect()
+    weekly = compute_weekly_counts(stored, apm_df, by_courier=True).collect()
     assert len(weekly) == 2
 
 
 def test_quarterly_counts(sample_data):
-    df, _ = sample_data
+    df, apm_df = sample_data
     stored = df.filter(col("event_type") == "ParcelStoredForDeliveryByCourier")
-    quarterly = compute_quarterly_counts(stored).collect()
+    quarterly = compute_quarterly_counts(stored, apm_df, by_courier=True).collect()
     assert len(quarterly) == 2
 
 
 def test_avg_time_in_apm(sample_data):
-    df, _ = sample_data
-    avg_time = compute_avg_time_in_apm(df).collect()
+    df, apm_df = sample_data
+    avg_time = compute_avg_time_in_apm(df, apm_df).collect()
     assert len(avg_time) == 2
     # check that avg_hours > 0
     for row in avg_time:

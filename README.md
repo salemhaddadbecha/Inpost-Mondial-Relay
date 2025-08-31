@@ -1,91 +1,135 @@
 # InPost / Mondial Relay Parcel Analytics
 
 ## Overview
-This project is a solution to the InPost / Mondial Relay homework assignment.  
-It demonstrates how to process parcel event data (10M+ rows/day) using **Spark + Parquet/Delta Lake** to produce analytics tables and KPIs.
+This project implements an analytics pipeline for **InPost/Mondial Relay** parcel data (≈10M events/day), using **Apache Spark** with **Parquet. 
+
+The goal is to produce key metrics on warehouse (APM) usage:
+
+1. Parcel counts per APM *per day*, *week*, and *quarter*, with optional breakdown by **courier_id**, including geolocation details.
+2. Average dwell time of parcels in destination APMs—from **ParcelStoredForDeliveryByCourier** to **ParcelCollectedByRecipient**.
+3. Data quality handling, clear FK–PK relationships, and practical advice for scaling and streaming vs. batch strategies.
 
 ---
 
-## Tasks
+##  Data Models & FK–PK Relationship
 
-### 1. Parcel Counts
-- Create downstream tables summarizing how many parcels were stored for delivery by courier in each APM.
-- Aggregations: **per day, per week, per quarter**.
-- Option to split results by **courier_id**.
-- Enriched with **APM geo details** (country, city, latitude, longitude).
+- **fact_parcel_events**: Near-real-time stream or batch of parcel lifecycle events (e.g. `ParcelStoredForDeliveryByCourier`, `ParcelCollectedByRecipient`, etc.). Contains `apm_id`.
+- **dim_apm**: A static dimension table listing each APM’s `apm_id` (primary key), along with **country**, **city**, **latitude**, and **longitude**.
 
-### 2. Average Time in APM
-- Compute the **average time a parcel spends in destination APM**:
-  - From `ParcelStoredForDeliveryByCourier`
-  - To `ParcelCollectedByRecipient`.
-
-### 3. Data Quality & Scaling
-- Handle **late arrivals, duplicates, malformed data**.
-- Discuss **batch vs. streaming pros/cons**.
-- Propose scaling solutions if data volume grows **10x or 100x**.
+ The `apm_id` field in `fact_parcel_events` acts as a **foreign key** referencing `dim_apm.apm_id`. In Spark code, we enforce this via consistent joins on `apm_id`, though Spark itself doesn’t enforce constraints.
 
 ---
 
-## 🛠️ Tech Stack
-- Apache Spark (PySpark)
-- Parquet / Delta Lake
-- Python 
-- GitHub and Git
-
-## How to run (local dev)
+##  How to Run (Local Dev)
 1. Create a virtual environment: `python -m venv .venv && source .venv/bin/activate`
 2. Install dependencies: `pip install -r requirements.txt`
 3. Bootstrap sample data and run local batch job:
 ```bash
+# Step 1: Bootstrap sample data
 ./setup.sh bootstrap-data
-#For batch processing
-python src/main.py --mode batch --input data/batch/ --apm data/dim_apm.csv
-#For streaming processing: 
-python src/main.py --mode stream --input data/stream_input/ --apm data/dim_apm.csv
+
+# Batch processing (Parquet format)
+python src/main.py --mode batch --input data/batch_parquet/ --apm data/dim_apm.csv
+
+# Stream processing (Parquet format)
+python src/main.py --mode stream --input data/stream_input_parquet/ --apm data/dim_apm.csv
+# On PowerShell, set PYTHONPATH if needed:
+$env:PYTHONPATH = "$(pwd)"
 ```
+---
+**Important**: Note the corrected paths: data/batch_parquet/ and data/stream_input_parquet/. These must match the actual output locations created by the bootstrap script.
 
+## Analysis Logic Overview
+### Batch Mode (batch_jobs.py)
+- Counts parcels stored for delivery:
+  - Daily (compute_daily_counts)
+  - Weekly (compute_weekly_counts)
+  - Quarterly (compute_quarterly_counts)
+  - Each supports optional courier split (by_courier=True/False)
+- Computes average dwell time in each APM (compute_avg_time_in_apm)
+- Each output is enriched with APM geo details via join with dim_apm.
+
+### Stream Mode (stream_jobs.py)
+- Reads events continuously with appropriate schema.
+- Uses a 1-day watermark and deduplication to handle:
+  - Late-arriving data (up to 1 day)
+  - Duplicate event prevention
+- Computes real-time streaming versions of daily, weekly, quarterly counts, and average dwell time; all enriched with APM data.
 ## Design decisions (summary)
--  Use Delta Lake for production to get ACID transactions, schema enforcement, and time travel. Use Parquet for simple local testing.
-- Use parcel_id as the unique identifier and deduplicate incoming event streams using last_value windowing or Delta MERGE operations.
-- 
-
+- For local testing and prototyping: use Parquet format.
+- For production: Delta Lake is recommended to get ACID transactions, schema enforcement, and time travel (not yet implemented in this repo).
+- Use parcel_id as the unique identifier and deduplicate incoming event streams using last_value windowing or Delta MERGE operations (future work).
 
 ## Batch vs Stream
 - Batch: simpler, reliable, good for daily aggregations.
 - Stream: useful for near-real-time dashboards, but more complex to manage.
 
-## Scaling Considerations
-- Partition by event_date and possibly apm_id.
-- Use Delta Lake for schema enforcement and ACID guarantees.
-- Enable Z-ordering / clustering for query performance.
-- For 100x data: consider data lakehouse + distributed compute (Databricks, EMR, GCP Dataproc).
----
+| Approach   | Pros                                                                                                                              | Cons                                                                                                                                                                                                      |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Batch**  | - Simpler to build and maintain<br>- Lower infrastructure overhead<br>- Easier to backfill or reprocess with full-day granularity | - Higher latency (process daily or hourly)<br>- Not suitable for real-time dashboards                                                                                                                     |
+| **Stream** | - Delivers near real-time insights<br>- Continuous ingestion and processing into dashboards or monitoring systems                 | - More complex infrastructure (state management, checkpointing)<br>- Harder to guarantee exactly-once semantics; requires careful design<br>- Higher operational overhead (monitoring, alerting, scaling) |
 
-## ⚡ Example Code (Batch Processing)
+## Scaling Strategy (When Volume Grows 10× or 100×)
+To scale efficiently as data grows:
+1. Data Partitioning
+   - Partition by date (event_date) and optionally by apm_id for faster queries and joins.
+2. Delta Lake for ACID & Performance
+- Use Delta Lake to enforce schema, support time travel, compact small files, and optimize queries. 
+- Use Z-order clustering on apm_id or event_date.
 
-```python
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, count, avg, weekofyear, quarter, datediff
+3. Optimized Spark Deployment
+- Launch on autoscaling clusters (Databricks, AWS EMR, GCP Dataproc).
+- Leverage dynamic allocation, caching, and partition pruning for performance.
 
-spark = SparkSession.builder.appName("InPostHomework").getOrCreate()
+4. Streaming Infrastructure Enhancements
+- Ingest via Kafka, AWS Kinesis, or similar durable queues.
+- Use transactional sinks (e.g. Delta) with idempotent writes or MERGE logic.
+- Scale streaming state store and optimize watermark settings for high-throughput scenarios.
 
-# Load tables
-events = spark.read.format("delta").load("data/fact_parcel_events")
-apm = spark.read.parquet("data/dim_apm")
+5. Monitoring & Cost Control
+- Implement pipeline observability, metrics, and alerts for data lags or failures
+- Archive older partitions (cold storage) if needed for cost efficiency.
+## Data Quality & Malformed Data Handling
+- Implemented:
+  - Late & duplicate records: Managed in stream mode via watermarking and dropDuplicates().
+  
+- Possible improvements (future work):
+  - Handle nulls/malformed records with dropna() or fillna().
+  - Quarantine invalid records into a dead-letter location.
+  - Schema drift detection using validation logic (e.g., isIn() checks).
+  - Maintain audit stream for unknown or invalid events.
 
-# 1. Aggregations
-daily_counts = (
-    events.filter(col("event_type") == "ParcelStoredForDeliveryByCourier")
-    .groupBy("apm_id", "event_date")
-    .count()
-)
+- Schema drift / unexpected event types:
+  - Use validation logic (e.g. isIn() checks or UDF-based rules) to accept only valid event_type values.
+  - Maintain an audit stream for unknown or invalid events.
+## Test Suite
+A simple PyTest suite validates:
+- Daily / Weekly / Quarterly counts work when splitting by courier.
+- Average dwell time calculations produce positive average durations.
+- Join with dim_apm successfully enriches results.
 
-# 2. Avg time in APM
-stored = events.filter(col("event_type") == "ParcelStoredForDeliveryByCourier") \
-               .select("parcel_id", col("event_time").alias("stored_time"))
-collected = events.filter(col("event_type") == "ParcelCollectedByRecipient") \
-                  .select("parcel_id", col("event_time").alias("collected_time"))
+To run in a standalone way:
+## Setup
+Create a new conda environment and install dependencies:
 
-duration = stored.join(collected, "parcel_id") \
-                 .withColumn("duration_days", datediff("collected_time", "stored_time")) \
-                 .groupBy().agg(avg("duration_days"))
+```bash
+conda create -n spark-env python=3.11
+conda activate spark-env
+pip install -r requirements.txt
+```bash
+pytest -s tests/test_functions.py 
+#Or one function: 
+pytest -s tests/test_functions.py::test_daily_counts
+
+```
+## Continuous Integration (CI)
+This project uses GitHub Actions for continuous integration, running automatically on push and pull request events.
+
+The CI pipeline performs:
+- Python environment setup (Python 3.11)
+- Dependency installation
+- Unit tests execution with pytest
+- 
+The workflow is defined in .github/workflows/python-app.yml.
+
+ 
