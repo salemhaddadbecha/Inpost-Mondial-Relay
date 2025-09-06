@@ -17,27 +17,29 @@ def start_stream_processing(spark, input_path, apm_df):
     events_stream = spark.readStream.schema(schema).parquet(input_path)
     events_stream = events_stream.withColumn("event_date", to_date("event_date"))
 
-    # Handles late data (up to 1 day) and Removes duplicate events for the same parcel
+    # Handles late data: Events may arrive late but only up to 1 date late
     deduped = events_stream.withWatermark('event_time', '1 day') \
-        .dropDuplicates(['parcel_id', 'event_type', 'event_time'])
+        .dropDuplicates(['parcel_id', 'event_type', 'event_time']) #Removes duplicate events for the same parcel
 
     stored = deduped.filter(col('event_type') == 'ParcelStoredForDeliveryByCourier')
     """First KPI"""
     daily_counts = compute_daily_counts(stored, apm_df, by_courier=True)
     weekly_counts = compute_weekly_counts(stored, apm_df, by_courier=True)
     quarterly_counts = compute_quarterly_counts(stored, apm_df, by_courier=True)
+    #deduped.writeStream.format('console').outputMode('append').start()
 
     """Second KPI"""
     # Pivot events so that each parcel has stored_time and collected_time columns
     pivoted = deduped.groupBy("parcel_id", "apm_id") \
         .pivot("event_type", ["ParcelStoredForDeliveryByCourier", "ParcelCollectedByRecipient"]) \
         .agg(F.first("event_time"))
+    #pivoted.writeStream.format("console").outputMode("complete").start()
     # Compute duration (in hours) when both events exist
     durationed = pivoted.withColumn(
         "duration_hours",
         (unix_timestamp("ParcelCollectedByRecipient") - unix_timestamp("ParcelStoredForDeliveryByCourier")) / 3600.0
     ).filter(col("duration_hours").isNotNull())
-    avg_time_in_apm = durationed.groupBy("apm_id").agg(avg("duration_hours").alias("avg_hours"))
+    avg_time_in_apm = durationed.groupBy("apm_id").agg(avg("duration_hours").alias("avg_hours")).join(apm_df, on='apm_id', how='left')
 
     daily_query = daily_counts.writeStream.format('console').outputMode('complete').start()
     weekly_query = weekly_counts.writeStream.format('console').outputMode('complete').start()
@@ -45,3 +47,5 @@ def start_stream_processing(spark, input_path, apm_df):
     avg_query = avg_time_in_apm.writeStream.format("console").outputMode("complete").start()
 
     return [daily_query, weekly_query, quarterly_query, avg_query]
+
+

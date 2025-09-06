@@ -132,4 +132,10 @@ The CI pipeline performs:
 - 
 The workflow is defined in .github/workflows/python-app.yml.
 
- 
+## Read parquet file: 
+```bash
+import pyarrow.parquet as pq
+import pandas as pd
+df = pq.read_table('output\parcel_counts_daily\part-00000-4f5ceda4-b249-4d99-8ee2-aebbeea80c7f-c000.snappy.parquet').to_pandas()
+print(df.head())
+``` 

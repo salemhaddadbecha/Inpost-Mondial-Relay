@@ -1,5 +1,6 @@
 from pyspark.sql.functions import to_timestamp, to_date
 from pyspark.sql.functions import col, count, avg, to_date, weekofyear, quarter, unix_timestamp
+from pyspark.sql.functions import col, unix_timestamp, avg
 
 
 def read_events(spark, path, format='parquet'):
@@ -22,7 +23,7 @@ def compute_daily_counts(stored_df, apm_df, by_courier=False):
     grouping = ['apm_id', 'event_date']
     if by_courier:
         grouping.append('courier_id')
-    daily = stored_df.groupBy(*grouping).agg(count('*').alias('stored_count'))
+    daily = stored_df.groupBy(*grouping).agg(count('*').alias('stored_count_daily'))
     return daily.join(apm_df, on='apm_id', how='left')
 
 
@@ -30,6 +31,7 @@ def compute_weekly_counts(stored_df, apm_df, by_courier=False):
     grouping = ['apm_id', 'week']
     if by_courier:
         grouping.append('courier_id')
+
     weekly = stored_df.withColumn('week', weekofyear(to_date(col('event_date')))) \
         .groupBy(*grouping).agg(count('*').alias('stored_count_week'))
     return weekly.join(apm_df, on='apm_id', how='left')
@@ -42,9 +44,6 @@ def compute_quarterly_counts(stored_df, apm_df, by_courier=False):
     quarterly = stored_df.withColumn('quarter', quarter(to_date(col('event_date')))) \
         .groupBy(*grouping).agg(count('*').alias('stored_count_quarter'))
     return quarterly.join(apm_df, on='apm_id', how='left')
-
-
-from pyspark.sql.functions import col, unix_timestamp, avg
 
 
 def compute_avg_time_in_apm(events_df, apm_df):

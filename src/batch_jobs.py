@@ -3,6 +3,7 @@ from src.utils import compute_weekly_counts, compute_daily_counts, compute_quart
 
 
 def run_parcel_counts(events_df, apm_df, by_courier=False):
+
     stored = events_df.filter(col('event_type') == 'ParcelStoredForDeliveryByCourier')
 
     daily = compute_daily_counts(stored, apm_df, by_courier)
