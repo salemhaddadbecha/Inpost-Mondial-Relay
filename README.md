@@ -64,10 +64,10 @@ $env:PYTHONPATH = "$(pwd)"
 - Batch: simpler, reliable, good for daily aggregations.
 - Stream: useful for near-real-time dashboards, but more complex to manage.
 
-| Approach   | Pros                                                                                                                              | Cons                                                                                                                                                                                                      |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Batch**  | - Simpler to build and maintain<br>- Lower infrastructure overhead<br>- Easier to backfill or reprocess with full-day granularity | - Higher latency (process daily or hourly)<br>- Not suitable for real-time dashboards                                                                                                                     |
-| **Stream** | - Delivers near real-time insights<br>- Continuous ingestion and processing into dashboards or monitoring systems                 | - More complex infrastructure (state management, checkpointing)<br>- Harder to guarantee exactly-once semantics; requires careful design<br>- Higher operational overhead (monitoring, alerting, scaling) |
+| Approach   | Pros                                                                                                                                                                                                                                                                                                            | Cons                                                                                                                                                                                                                                                         |
+| ---------- |-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Batch**  | - Simpler to build and maintain<br>- Lower infrastructure overhead<br>- Easier to backfill or reprocess with full-day granularity. <br> - No need to manage watermarks. <br>- Can process large volumes of data efficiently because entire partitions are loaded and cached. <br>- Data Size is know and finite | - Higher latency (process daily or hourly)<br>- Not suitable for real-time dashboards. <br> Large batches may require more memory / CPU. <br>- Kafka or IoT data can't be consumed continuously without building a streaming layer.                          |
+| **Stream** | - Delivers near real-time insights<br>- Continuous ingestion and processing into dashboards or monitoring systems. <br>- Automatically consumes Kafka, S3 without manual batch triggers. <br>- Supports aggregations, joins and windowing on live data streams.                                                 | - More complex infrastructure (state management, checkpointing)<br>- Ensuring no duplicate processing is tricky and needs careful setup <br>- Higher operational overhead (monitoring, alerting, scaling)  <br> Data Size is unkown and infinite in advance. |
 
 ## Scaling Strategy (When Volume Grows 10× or 100×)
 To scale efficiently as data grows:
@@ -97,11 +97,9 @@ To scale efficiently as data grows:
   - Handle nulls/malformed records with dropna() or fillna().
   - Quarantine invalid records into a dead-letter location.
   - Schema drift detection using validation logic (e.g., isIn() checks).
-  - Maintain audit stream for unknown or invalid events.
-
-- Schema drift / unexpected event types:
-  - Use validation logic (e.g. isIn() checks or UDF-based rules) to accept only valid event_type values.
-  - Maintain an audit stream for unknown or invalid events.
+    - Use validation logic (e.g. isIn() checks or UDF-based rules) to accept only valid event_type values.
+    - Maintain an audit stream for unknown or invalid events.
+  
 ## Test Suite
 A simple PyTest suite validates:
 - Daily / Weekly / Quarterly counts work when splitting by courier.
@@ -129,7 +127,7 @@ The CI pipeline performs:
 - Python environment setup (Python 3.11)
 - Dependency installation
 - Unit tests execution with pytest
-- 
+
 The workflow is defined in .github/workflows/python-app.yml.
 
 ## Read parquet file: 
